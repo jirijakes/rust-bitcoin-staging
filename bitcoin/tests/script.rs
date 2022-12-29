@@ -83,7 +83,7 @@ fn do_test(test: &Test) {
     if let Some(success) = &test.success {
         all_flags()
             .into_iter()
-            .filter(|&flags| test.is_final || (flags & flags == flags))
+            .filter(|&flags| test.is_final || (flags & test_flags == flags))
             .for_each(|flags| {
                 let res = test_script(&success, &mut tx, &prevouts[test.index], test.index, flags);
                 assert!(res.is_ok(), "Success: {:?} {:#?}", res, test);
