@@ -89,15 +89,15 @@ fn do_test(test: &Test) {
     let flags: u32 = test.flags.split(",").map(string_to_flag).fold(VERIFY_NONE, |a, b| a | b);
 
     if let Some(success) = &test.success {
-        all_flags().iter().filter(|&f| test.is_final || (flags & f == flags)).for_each(|f| {
-            let res = test_script(&success, &mut tx, &prevouts, test.index, *f);
+        all_flags().into_iter().filter(|&f| test.is_final || (f & flags == f)).for_each(|f| {
+            let res = test_script(&success, &mut tx, &prevouts, test.index, f);
             assert!(res.is_ok(), "Success: {:?} {:#?}", res, test);
         });
     }
 
     if let Some(failure) = &test.failure {
-        all_flags().iter().filter(|&f| flags & f == flags).for_each(|f| {
-            let res = test_script(&failure, &mut tx, &prevouts, test.index, *f);
+        all_flags().into_iter().filter(|&f| f & flags == f).for_each(|f| {
+            let res = test_script(&failure, &mut tx, &prevouts, test.index, f);
             assert!(res.is_err(), "Failure: {:?} {:#?}", res, test);
         });
     }
