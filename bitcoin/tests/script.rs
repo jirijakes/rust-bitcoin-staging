@@ -4,7 +4,7 @@
 
 use std::fs::File;
 
-use bitcoin::consensus::deserialize;
+use bitcoin::consensus::{deserialize, serialize};
 use bitcoin::*;
 use bitcoin_hashes::hex::FromHex;
 use bitcoinconsensus::*;
@@ -32,20 +32,17 @@ struct ScriptSig {
 }
 
 #[test]
-fn script_tests() {
+fn script_assets_test() {
     let f = File::open("tests/data/script_assets_test.json").unwrap();
     let tests: Vec<Test> = serde_json::from_reader(&f).unwrap();
 
-    tests
-        .iter()
-        /*.filter(|t| !t.flags.contains("TAPROOT"))*/
-        .for_each(do_test);
+    tests.iter().for_each(do_test);
 }
 
 fn test_script(
     script_sig: &ScriptSig,
     tx: &mut Transaction,
-    prevouts: &[TxOut],
+    prevout: &TxOut,
     index: usize,
     flags: u32,
 ) -> Result<(), script::Error> {
@@ -57,16 +54,10 @@ fn test_script(
         txin.script_sig = ScriptBuf::from_hex(&script_sig.script_sig).unwrap();
     }
 
-    tx.verify_with_flags(
-        |looking_for| {
-            tx.input.iter().zip(prevouts.iter()).find_map(|(txin, txout)| {
-                if txin.previous_output == *looking_for {
-                    Some(txout.clone())
-                } else {
-                    None
-                }
-            })
-        },
+    prevout.script_pubkey.verify_with_flags(
+        index,
+        Amount::from_sat(prevout.value),
+        &serialize(tx),
         flags,
     )
 }
@@ -76,6 +67,7 @@ fn do_test(test: &Test) {
     let prevouts: Vec<TxOut> =
         test.prevouts.iter().map(|v| deserialize(&Vec::from_hex(&v).unwrap()).unwrap()).collect();
 
+    // Skip taproot, no support with current bitcoinconsensus.
     if prevouts.iter().any(|p| p.script_pubkey.is_v1_p2tr()) {
         return;
     }
@@ -86,20 +78,25 @@ fn do_test(test: &Test) {
         "Number of prevouts and number of txins of the transaction are not the same."
     );
 
-    let flags: u32 = test.flags.split(",").map(string_to_flag).fold(VERIFY_NONE, |a, b| a | b);
+    let test_flags: u32 = test.flags.split(",").map(string_to_flag).fold(VERIFY_NONE, |a, b| a | b);
 
     if let Some(success) = &test.success {
-        all_flags().into_iter().filter(|&f| test.is_final || (f & flags == f)).for_each(|f| {
-            let res = test_script(&success, &mut tx, &prevouts, test.index, f);
-            assert!(res.is_ok(), "Success: {:?} {:#?}", res, test);
-        });
+        all_flags()
+            .into_iter()
+            .filter(|&flags| test.is_final || (flags & flags == flags))
+            .for_each(|flags| {
+                let res = test_script(&success, &mut tx, &prevouts[test.index], test.index, flags);
+                assert!(res.is_ok(), "Success: {:?} {:#?}", res, test);
+            });
     }
 
     if let Some(failure) = &test.failure {
-        all_flags().into_iter().filter(|&f| f & flags == f).for_each(|f| {
-            let res = test_script(&failure, &mut tx, &prevouts, test.index, f);
-            assert!(res.is_err(), "Failure: {:?} {:#?}", res, test);
-        });
+        all_flags().into_iter().filter(|&flags| flags & test_flags == test_flags).for_each(
+            |flags| {
+                let res = test_script(&failure, &mut tx, &prevouts[test.index], test.index, flags);
+                assert!(res.is_err(), "Failure: {:?} {:#?}", res, test);
+            },
+        );
     }
 }
 
@@ -118,7 +115,8 @@ fn string_to_flag(s: &str) -> u32 {
 
 #[rustfmt::skip]
 fn all_flags() -> Vec<u32> {
-    (0..128)
+    (0..64)
+    // (0..128)
         .filter_map(|i| {
             let mut flag = 0;
             if i &  1 > 0 { flag |= VERIFY_P2SH };
